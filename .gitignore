@@ -57,3 +57,4 @@ trash
 src/notebooks/*.csv
 .env
 *.csv
+electropunk

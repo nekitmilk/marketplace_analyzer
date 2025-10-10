@@ -1,8 +1,8 @@
 RAW_DIRECTORY = '../data/raw_data_electrods/' # Директория для сырых данных 
 CLEAR_DIRECTORY = '../data/clear_data_electrodes/' # Директория для создания очищенного набора данных
-GOODS_FILE = 'Goods.csv'
-OTHER_CHARACTERISTICKS_FILE = 'Other_specifications.csv'
-FEEDBACKS_FILE = 'Feedbacks.csv'
+CLEAR_GOODS_FILE = 'Goods.csv'
+CLEAR_OTHER_CHARACTERISTICKS_FILE = 'Other_specifications.csv'
+CLEAR_FEEDBACKS_FILE = 'Feedbacks.csv'
 
 # Настройка сбора товаров с Wildberries
 WB_PRODUCTS_FILE = 'wb_products.csv' # Файл для записи всех товаров с главной страницы
