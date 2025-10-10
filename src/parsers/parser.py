@@ -23,8 +23,7 @@ from threading import Lock
 import os
 from concurrent.futures import ThreadPoolExecutor
 
-from config_parser_cabels import *
-from config_parser_v2 import *
+from parsers import config_parser
 
 import logging
 logging.basicConfig(level=logging.INFO, filename="parser.log", filemode="w",
@@ -44,11 +43,11 @@ class Parser:
     
     def _init_driver(self, browser="firefox"):
         if browser == "firefox":
-            self.driver = self._init_driver_firefox(BROWSER_HEADLESS)
+            self.driver = self._init_driver_firefox(config_parser.BROWSER_HEADLESS)
         elif browser == "chrome":
             self.driver = self._init_driver_chrome()
         elif browser == "undetected_chrome":
-            self.driver = self._init_driver_undetected_chrome(CHROME_HEADLESS)
+            self.driver = self._init_driver_undetected_chrome(config_parser.CHROME_HEADLESS)
         else:
             raise ValueError(f"Unsupported browser: {browser}")
         
@@ -251,7 +250,7 @@ class WB_Parser(Parser):
                     "inheritFilters": "false",
                     "lang": "ru",
                     "page": str(page),
-                    "query": query,  # Убедитесь, что здесь нет опечаток!
+                    "query": query,
                     "resultset": "catalog",
                     "sort": "popular",
                     "spp": "30",
@@ -271,40 +270,30 @@ class WB_Parser(Parser):
 
                 data = response.json()
                 
-                # Отладочная информация
-                print(f"Страница {page} - Статус: {response.status_code}")
-                print(f"URL: {response.url}")
-                
-                # Получаем товары из правильного поля
                 products = data.get("products", [])
-                print(f"Найдено товаров: {len(products)}")
                 
                 if not products:
                     logging.info(f"Нет товаров на странице {page}. Прекращаем парсинг.")
                     break
 
                 for product in products:
-                    # Получаем цену из sizes[0].price.product
                     price = 0
                     if product.get("sizes") and len(product["sizes"]) > 0:
                         price_data = product["sizes"][0].get("price", {})
-                        price = price_data.get("product", 0) / 100  # Делим на 100 для перевода в рубли
+                        price = price_data.get("product", 0) / 100
                     
                     all_products.append({
                         "id": product.get("id"),
+                        "marketplace": "wb",
                         "name": product.get("name", ""),
                         "price": price,
                         "rating": product.get("reviewRating", 0),
                         "feedbacks": product.get("feedbacks", 0),
                         "brand": product.get("brand", ""),
-                        "supplier": product.get("supplier", ""),
-                        "subjectId": product.get("subjectId", ""),  # ID категории
-                        "subjectParentId": product.get("subjectParentId", "")  # Родительская категория
                     })
                 
                 logging.debug(f"Страница {page} получена, товаров: {len(products)}")
                 
-                # Задержка между запросами
                 delay = random.uniform(1, 2)
                 time.sleep(delay)
                 
@@ -344,7 +333,7 @@ class WB_Parser(Parser):
             # Обработка подтверждения возраста
             try:
             # Ждем появления модального окна подтверждения возраста
-                age_modal = WebDriverWait(driver, 5).until(
+                age_modal = WebDriverWait(driver, 1).until(
                     EC.presence_of_element_located((By.CSS_SELECTOR, ".mo-modal__paper._popupNarrow_1b9nk_25"))
                 )
                 logging.info(f"{product_id} Найдено модальное окно подтверждения возраста")
@@ -359,17 +348,17 @@ class WB_Parser(Parser):
                 for button_selector in confirm_buttons:
                     try:
                         if button_selector.startswith("//"):
-                            confirm_btn = WebDriverWait(driver, 3).until(
+                            confirm_btn = WebDriverWait(driver, 0.5).until(
                                 EC.element_to_be_clickable((By.XPATH, button_selector))
                             )
                         else:
-                            confirm_btn = WebDriverWait(driver, 3).until(
+                            confirm_btn = WebDriverWait(driver, 0.5).until(
                                 EC.element_to_be_clickable((By.CSS_SELECTOR, button_selector))
                             )
                         
                         driver.execute_script("arguments[0].click();", confirm_btn)
                         logging.info(f"{product_id} Подтверждение возраста выполнено")
-                        time.sleep(2)  # Ждем закрытия модального окна
+                        time.sleep(1)  # Ждем закрытия модального окна
                         break
                     except Exception as e:
                         continue
@@ -386,29 +375,28 @@ class WB_Parser(Parser):
             # ПОИСК И НАЖАТИЕ КНОПКИ "ХАРАКТЕРИСТИКИ И ОПИСАНИЕ"
             detail_button_found = False
             detail_button_selectors = [
+                "//button[contains(., 'арактеристики')]",
                 "button[data-name-for-wba='Item_Parameters_More']",
-                "button[aria-label*='Характеристики']",
-                "//button[contains(text(), 'Характеристики')]",
-                "//button[contains(text(), 'Подробнее')]",
-                ".clickableButton--I1bNU"
+                ".clickableButton--I1bNU",
+                "//button[contains(., 'Подробнее')]",
             ]
             
             logging.info(f"Поиск кнопки характеристик для товара {product_id}")
             for selector in detail_button_selectors:
                 try:
                     if selector.startswith("//"):
-                        button = WebDriverWait(driver, 5).until(
+                        button = WebDriverWait(driver, 1.5).until(
                             EC.element_to_be_clickable((By.XPATH, selector))
                         )
                     else:
-                        button = WebDriverWait(driver, 5).until(
+                        button = WebDriverWait(driver, 1.5).until(
                             EC.element_to_be_clickable((By.CSS_SELECTOR, selector))
                         )
                     
                     driver.execute_script("arguments[0].click();", button)
                     logging.info(f"{product_id} Кнопка характеристик нажата: {selector}")
                     detail_button_found = True
-                    time.sleep(3)  # Ждем открытия модального окна
+                    time.sleep(1.5)  # Ждем открытия модального окна
                     break
                 except Exception as e:
                     logging.debug(f"{product_id} Селектор {selector} не сработал: {e}")
@@ -605,41 +593,20 @@ class WB_Parser(Parser):
                 except:
                     rating = None
 
-                advantage = None
-                disadvantage = None
-                comment = None
+                text = None
                 
                 # Парсинг текста отзыва
                 try:
                     text_block = item.find_element(By.CSS_SELECTOR, ".feedback__text.j-feedback__text")
-                    
-                    # Обработка структурированных отзывов (с разделами)
-                    sections = text_block.find_elements(By.CLASS_NAME, "feedback__text--item")
-                    if sections:
-                        for section in sections:
-                            text = section.text.strip()
-                            if not text:
-                                continue
-                                
-                            if "feedback__text--item-pro" in section.get_attribute("class"):
-                                advantage = text
-                            elif "feedback__text--item-con" in section.get_attribute("class"):
-                                disadvantage = text
-                            else:
-                                comment = text
-                    # Обработка неструктурированных отзывов
-                    else:
-                        comment = text_block.text.strip()
+                    text = text_block.text
                 except:
-                    pass  # Если текста нет, оставляем поля пустыми
+                    pass
 
                 feedbacks_list.append({
-                    'product_id': product_id,
+                    'good_id': product_id,
                     'marketplace': 'wb',
                     'rating': rating,
-                    'advantage': advantage,
-                    'disadvantage': disadvantage,
-                    'comment': comment
+                    'text': text,
                 })
             feedbacks = pd.DataFrame(feedbacks_list)
             logging.info(f"{product_id} Отзывы успешно собраны. Количество отзывов: {len(feedbacks)}")
@@ -685,7 +652,6 @@ class Ozon_Parser(Parser):
             scroll_attempts = 0
             max_attempts = 10
             while scroll_attempts < max_attempts and len(products_data) < max_products:
-                # driver.execute_script("window.scrollBy(0, window.innerHeight * 2);")
                 driver.execute_script("""
                     window.scrollBy({
                         top: window.innerHeight * 2,
@@ -810,7 +776,8 @@ class Ozon_Parser(Parser):
     
     def get_product_feedbacks(self, product_id, driver=None, max_product_feedbacks=10_000) -> pd.DataFrame:
 
-        this_variant_selector = 'e820-b4'
+        this_variant_xpath = "//button[contains(., 'Этот вариант товара')]"
+        reviews_selector = "div[data-widget='webReviewTabs']"
         recomendation_selector = 'jl9_24'
 
         if driver is None:
@@ -822,11 +789,10 @@ class Ozon_Parser(Parser):
         try:
             driver.get(url=f"https://www.ozon.ru/product/{product_id}/")
             time.sleep(2)
-            self._scroll_to_element('div.e820-a')
-            
+            self._scroll_to_element(css_selector=reviews_selector)
             try:
                 variant_button = WebDriverWait(driver, 1).until(
-                    EC.element_to_be_clickable((By.CSS_SELECTOR, f'button.{this_variant_selector}'))
+                    EC.element_to_be_clickable((By.XPATH, this_variant_xpath))
                 )
                 driver.execute_script("arguments[0].click();", variant_button)
             except:
@@ -850,8 +816,11 @@ class Ozon_Parser(Parser):
                     
                 if new_items == 0:
                     scroll_attempts += 1
+                    # self._scroll_to_element(web_element=driver.find_elements(
+                    #     By.CSS_SELECTOR, (f'div.{recomendation_selector}'))[-1]
+                    # )
                     self._scroll_to_element(web_element=driver.find_elements(
-                        By.CSS_SELECTOR, (f'div.{recomendation_selector}'))[-1]
+                        By.XPATH, "//span[text()='Рекомендуем также']")[-1]
                     )
 
                     time.sleep(2)
@@ -908,10 +877,11 @@ class Ozon_Parser(Parser):
 
                     data_collector.append({
                         "link": link,
-                        "title": title,
+                        "marketplace": "ozon",
+                        "name": title,
                         "price": price,
                         "rating": rating,
-                        "reviews": reviews
+                        "feedbacks": reviews
                     })
                     new_items += 1
             except Exception as e:
@@ -925,11 +895,11 @@ class Ozon_Parser(Parser):
         # current_feedbacks = driver.find_elements(By.CSS_SELECTOR, "div.v5r_30")
         current_feedbacks = driver.find_elements(By.XPATH, '//*[@data-review-uuid]')
 
-        rating_selector = 'qr4_30'
-        read_full_selector = 'r5q_30'
-        advantage_selector = 'q5r_30'
-        paragraph_selector = 'rq5_30'
-        text_selector = 'qr5_30'
+        rating_selector = 'm5l_28' #
+        read_full_selector = 'ml7_28'
+        # advantage_selector = 'q5r_30'
+        paragraph_selector = 'l7m_28' #
+        text_selector = 'm6l_28' #
         new_items = 0
 
         for feedback in current_feedbacks:
@@ -946,7 +916,7 @@ class Ozon_Parser(Parser):
                 try:
                     stars_container = feedback.find_element(By.CSS_SELECTOR, f'div.{rating_selector}')
                     filled_stars = stars_container.find_elements(
-                        By.CSS_SELECTOR, 'svg[style*="rgb(255, 165, 0)"]'
+                        By.CSS_SELECTOR, 'svg[style*="graphicRating"]'
                     )
                     rating = len(filled_stars)
                 except:
@@ -960,34 +930,33 @@ class Ozon_Parser(Parser):
                 except:
                     logging.debug('Кнопка "Читать полностью" не найдена"')
 
-                advantage = None
-                disadvantage = None
-                comment = None
+                text = ""
                 try:
                     texts_elem = feedback.find_elements(By.CSS_SELECTOR, f'div.{paragraph_selector}')
+                    logging.debug(f'Кол-во параграфов: {len(texts_elem)}')
                     if len(texts_elem) > 1:
-                        for text in texts_elem:
-                            text_field_name = text.find_element(By.CSS_SELECTOR, f'div.{advantage_selector}').text.strip().lower()
-                            if text_field_name == 'достоинства':
-                                advantage = text.find_element(By.CSS_SELECTOR, f'span.{text_selector}').text.strip()
-                            elif text_field_name == 'недостатки':
-                                disadvantage = text.find_element(By.CSS_SELECTOR, f'span.{text_selector}').text.strip()
-                            else:
-                                comment = text.find_element(By.CSS_SELECTOR, f'span.{text_selector}').text.strip()
-                        pass
+                        # for text in texts_elem:
+                        #     text_field_name = text.find_element(By.CSS_SELECTOR, f'div.{advantage_selector}').text.strip().lower()
+                        #     if text_field_name == 'достоинства':
+                        #         advantage = text.find_element(By.CSS_SELECTOR, f'span.{text_selector}').text.strip()
+                        #     elif text_field_name == 'недостатки':
+                        #         disadvantage = text.find_element(By.CSS_SELECTOR, f'span.{text_selector}').text.strip()
+                        #     else:
+                        #         comment = text.find_element(By.CSS_SELECTOR, f'span.{text_selector}').text.strip()
+
+                        for text_elem in texts_elem:
+                            text += text_elem.find_element(By.CSS_SELECTOR, f'span.{text_selector}').text.strip() + ' '
                     else:
-                        comment = feedback.find_element(By.CSS_SELECTOR, f'span.{text_selector}').text.strip()
+                        text = feedback.find_element(By.CSS_SELECTOR, f'span.{text_selector}').text.strip()
                 except:
-                    comment = ""
+                    text = ""
                     logging.debug("Текст отзыва не найден")
 
                 data_collector.append({
-                    'product_id': int(product_id),
+                    'good_id': int(product_id),
                     'marketplace': 'ozon',
                     'rating': rating,
-                    'advantage': advantage,
-                    'disadvantage': disadvantage,
-                    'comment': comment
+                    'text': text,
                 })
                 new_items += 1
             except Exception as e:
@@ -1033,27 +1002,29 @@ class Ozon_Parser(Parser):
     def __exit__(self, exc_type, exc_val, exc_tb):
         return super().__exit__(exc_type, exc_val, exc_tb)
 
-def parse_product_data(product_data):
+
+def normalize_text(text):
+    """Нормализует текст для поиска"""
+    if not isinstance(text, str):
+        return ""
+    return re.sub(r'[^\w\s]', '', text.lower().strip())
+
+def parse_product_data_wb(product_data):
     """
     Преобразует сырые данные товара в два DataFrame:
-    1. Основная информация (main_info)
+    1. Описание (main_info)
     2. Характеристики (specifications)
+    
+    Args:
+        product_data: Сырые данные товара
     """
     product_id = product_data['id']
     description = product_data['description']
     details = {
         "id" : product_id,
         "description": description,
-        "power_type": None,
-        "zones": None,
-        "type": None
     }
-    specs_mapping = {
-        'power_type': ['питани', 'питание', 'электропитание'],
-        'zones': ['зон', 'област', 'воздейств'],
-        'type': ['тип']
-    }
-    
+
     specs_list = []
     for group_name, group_items in product_data['specifications'].items():
         for name, value in group_items.items():
@@ -1063,18 +1034,9 @@ def parse_product_data(product_data):
                 'name': name,
                 'value': value
             })
-            for key, keywords in specs_mapping.items():
-                if any(kw in name.lower() for kw in keywords):
-                    details[key] = value
     
-
-    main_info = pd.DataFrame({
-        'id': [product_id],
-        'power_type': [details['power_type']],
-        'zones': [details['zones']],
-        'type': [details['type']],
-        'description': [details['description']]
-    })
+    main_info_data = {key: [value] for key, value in details.items()}
+    main_info = pd.DataFrame(main_info_data)
     specifications = pd.DataFrame(specs_list)
     
     return main_info, specifications
@@ -1094,16 +1056,8 @@ def parse_product_data_ozon(product_data):
         'link': link,
         "description": description,
         "brand": brand,
-        "power_type": None,
-        "zones": None,
-        "type": None
     }
-    specs_mapping = {
-        'power_type': ['питани', 'питание', 'электропитание'],
-        'zones': ['зон', 'област', 'воздейств'],
-        'type': ['вид массажа', 'тип массажа'],
-    }
-    
+
     specs_list = []
     for name, value in product_data['specifications'].items():
         specs_list.append({
@@ -1111,20 +1065,9 @@ def parse_product_data_ozon(product_data):
             'name': name,
             'value': value
         })
-        for key, keywords in specs_mapping.items():
-            if any(kw in name.lower() for kw in keywords):
-                details[key] = value
-    
 
-    main_info = pd.DataFrame({
-        'id': [product_id],
-        'link': [details['link']],
-        'brand': [details['brand']],
-        'power_type': [details['power_type']],
-        'zones': [details['zones']],
-        'type': [details['type']],
-        'description': [details['description']]
-    })
+    main_info_data = {key: [value] for key, value in details.items()}
+    main_info = pd.DataFrame(main_info_data)
     specifications = pd.DataFrame(specs_list)
     
     return main_info, specifications
