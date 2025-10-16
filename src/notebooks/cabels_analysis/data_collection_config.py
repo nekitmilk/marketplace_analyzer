@@ -1,10 +1,10 @@
-QUERY = "шнур для миостимулятора"
+QUERY = "шнур для электродов для миостимулятора"
 
 RAW_DIRECTORY = '../data/raw_data_cabels/' # Директория для сырых данных 
 CLEAR_DIRECTORY = '../data/clear_data_cabels/' # Директория для создания очищенного набора данных
-GOODS_FILE = 'Goods.csv'
-OTHER_CHARACTERISTICKS_FILE = 'Other_specifications.csv'
-FEEDBACKS_FILE = 'Feedbacks.csv'
+CLEAR_GOODS_FILE = 'Goods.csv'
+CLEAR_OTHER_CHARACTERISTICKS_FILE = 'Other_specifications.csv'
+CLEAR_FEEDBACKS_FILE = 'Feedbacks.csv'
 
 # Настройка сбора товаров с Wildberries
 WB_PRODUCTS_FILE = 'wb_products.csv' # Файл для записи всех товаров с главной страницы
@@ -30,10 +30,21 @@ OZON_PAGES = 10_000
 
 # Настройка очистки товаров с главной страницы
 WB_INCLUDE_PATTERNS = [
-    # r'электрод',
+    r'шнур', r'кабель', r'переходник', r'провод',
+    r'cable', r'cord', r'adapter', r'wire'
 ] # Какие товары включать?
+
 WB_EXCLUDE_PATTERNS = [
-    # r'шнур\s+переходник',
+    r'электрод', r'электронн', r'пластин', r'самоклеящ',
+    
+    # Паттерны для миостимуляторов
+    r'^миостимулятор', r'массажер[^.]*$', r'аппарат', r'тренажер',
+    
+    # Аксессуары
+    r'маска', r'тапочк', r'перчатк', r'нарукавник', r'очк',
+    
+    # Другие исключения
+    r'гелев', r'комплект', r'набор'
 ] # Какие товары исключить?
 
 WB_PERCENT_FEEDBACKS = 100 # Какой топ товаров по отзывам брать? (%)

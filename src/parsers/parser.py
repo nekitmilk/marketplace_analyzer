@@ -292,7 +292,7 @@ class WB_Parser(Parser):
                         "brand": product.get("brand", ""),
                     })
                 
-                logging.debug(f"Страница {page} получена, товаров: {len(products)}")
+                logging.info(f"Страница {page} получена, товаров: {len(products)}")
                 
                 delay = random.uniform(1, 2)
                 time.sleep(delay)
@@ -305,12 +305,13 @@ class WB_Parser(Parser):
                 continue
         
         print(f"Всего собрано товаров: {len(all_products)}")
-        return pd.DataFrame(all_products)
+        return pd.DataFrame(all_products).drop_duplicates(subset=['id']).reset_index(drop=True)
      
     def get_product_details(self, product_id, driver=None) -> dict: 
         if driver is None:
             if not self.driver:
                 self._init_driver(browser="firefox")
+                # self._init_driver(browser="undetected_chrome")
                 logging.info(f"Инициализация драйвера {type(self.driver)}")
             driver = self.driver
 
@@ -333,7 +334,7 @@ class WB_Parser(Parser):
             # Обработка подтверждения возраста
             try:
             # Ждем появления модального окна подтверждения возраста
-                age_modal = WebDriverWait(driver, 1).until(
+                age_modal = WebDriverWait(driver, 5).until(
                     EC.presence_of_element_located((By.CSS_SELECTOR, ".mo-modal__paper._popupNarrow_1b9nk_25"))
                 )
                 logging.info(f"{product_id} Найдено модальное окно подтверждения возраста")
@@ -375,10 +376,18 @@ class WB_Parser(Parser):
             # ПОИСК И НАЖАТИЕ КНОПКИ "ХАРАКТЕРИСТИКИ И ОПИСАНИЕ"
             detail_button_found = False
             detail_button_selectors = [
+                "//button[contains(., 'Характеристики и описание')]",
+                "//span[contains(text(), 'Характеристики и описание')]/ancestor::button",
+                ".btnDetail--im7UR",
+                "button.btnDetail--im7UR",
+                "//button[contains(@class, 'btnDetail--im7UR')]",
+                "//button[contains(@class, 'mo-button') and contains(., 'Характеристики')]",
+                "//div[contains(@class, 'options--JpiVQ')]//button",
                 "//button[contains(., 'арактеристики')]",
                 "button[data-name-for-wba='Item_Parameters_More']",
                 ".clickableButton--I1bNU",
                 "//button[contains(., 'Подробнее')]",
+                "//h4[contains(text(), 'Характеристики')]/preceding-sibling::button"
             ]
             
             logging.info(f"Поиск кнопки характеристик для товара {product_id}")
@@ -895,11 +904,11 @@ class Ozon_Parser(Parser):
         # current_feedbacks = driver.find_elements(By.CSS_SELECTOR, "div.v5r_30")
         current_feedbacks = driver.find_elements(By.XPATH, '//*[@data-review-uuid]')
 
-        rating_selector = 'm5l_28' #
-        read_full_selector = 'ml7_28'
+        rating_selector = 'ml4_28' #
+        read_full_selector = 'l6m_28'
         # advantage_selector = 'q5r_30'
-        paragraph_selector = 'l7m_28' #
-        text_selector = 'm6l_28' #
+        paragraph_selector = 'lm6_28' #
+        text_selector = 'ml5_28' #
         new_items = 0
 
         for feedback in current_feedbacks:
@@ -1001,6 +1010,340 @@ class Ozon_Parser(Parser):
     
     def __exit__(self, exc_type, exc_val, exc_tb):
         return super().__exit__(exc_type, exc_val, exc_tb)
+
+
+class ShopEmsParser(Parser):
+    def __init__(self):
+        super().__init__()
+
+    def __del__(self):
+        return super().__del__()
+    
+    def __enter__(self):
+        return super().__enter__()
+    
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        return super().__exit__(exc_type, exc_val, exc_tb)
+    
+    def collect_product_links(self, url):
+        """Получить все ссылки на товары со страницы"""
+        if not self.driver:
+            self._init_driver()
+        
+        self.driver.get(url)
+        time.sleep(3)  # Даем странице загрузиться
+        
+        # Прокручиваем страницу для загрузки всех товаров
+        self._scroll_page_down(self.driver)
+        
+        # Находим все карточки товаров
+        product_cards = self.driver.find_elements(By.CSS_SELECTOR, "div.js-product.t-store__card")
+        
+        links = []
+        for card in product_cards:
+            try:
+                # Получаем ссылку из атрибута data-product-url
+                product_url = card.get_attribute("data-product-url")
+                if product_url:
+                    links.append(product_url)
+                else:
+                    # Альтернативно: получаем ссылку из тега <a>
+                    link_element = card.find_element(By.CSS_SELECTOR, "a")
+                    href = link_element.get_attribute("href")
+                    if href:
+                        links.append(href)
+            except Exception as e:
+                logging.warning(f"Не удалось извлечь ссылку для товара: {e}")
+        
+        return links
+
+    def parse_single_product(self, url, driver=None):
+        if driver is None:
+            if not self.driver:
+                self._init_driver(browser="firefox")
+                logging.info(f"Инициализация драйвера {type(self.driver)}")
+            driver = self.driver
+        """Парсинг одной страницы товара"""
+        try:
+            logging.info(f"Парсинг товара: {url}")
+            
+            self.driver.get(url)
+            time.sleep(2)
+            
+            # Ждем загрузки основных элементов
+            WebDriverWait(self.driver, 10).until(
+                EC.presence_of_element_located((By.TAG_NAME, "body"))
+            )
+            
+            # Собираем основную информацию
+            product_info = self._parse_product_info(url)
+            if not product_info:
+                return None, []
+            
+            characteristics_tabs = self.driver.find_elements(
+            By.XPATH, 
+            "//button[contains(text(), 'Характеристики')] | //li[contains(text(), 'Характеристики')]"
+            )
+            
+            for tab in characteristics_tabs:
+                try:
+                    # Кликаем на вкладку характеристик
+                    self.driver.execute_script("arguments[0].click();", tab)
+                    time.sleep(1)  # Ждем загрузки характеристик
+                    break
+                except:
+                    continue
+            
+            # Также пробуем через селектор для мобильной версии
+            try:
+                select_element = self.driver.find_element(By.CSS_SELECTOR, "select.t395__select")
+                from selenium.webdriver.support.ui import Select
+                select = Select(select_element)
+                # Выбираем опцию с характеристиками
+                for option in select.options:
+                    if "Характеристики" in option.text:
+                        select.select_by_visible_text(option.text)
+                        time.sleep(1)
+                        break
+            except:
+                pass
+
+            # Собираем характеристики
+            product_specs = self._parse_specifications(url)
+            
+            return product_info, product_specs
+            
+        except Exception as e:
+            logging.error(f"Ошибка при парсинге {url}: {e}")
+            return None, []
+
+    def _parse_product_info(self, url):
+        """Парсинг основной информации о товаре"""
+        try:
+            # Название товара
+            name = self._get_element_text(
+                By.CSS_SELECTOR, 
+                "h1.t795__title, h1.t-title, div.t-container h1, h1.t-name"
+            )
+            
+            if not name:
+                logging.warning(f"Не найдено название для товара: {url}")
+                return None
+            
+            # Цена в рублях (из формы)
+            price = self._extract_price_from_form()
+            
+            # Бренд (извлекаем из названия или находим отдельно)
+            brand = self._extract_brand(name)
+            
+            # Описание
+            description = self._get_element_text(
+                By.CSS_SELECTOR, 
+                "div[field='text']"
+            )
+            
+            # Если описание не найдено, пробуем альтернативные селекторы
+            if not description:
+                description = self._get_element_text(
+                    By.CSS_SELECTOR,
+                    "div.t-text.t-text_md, .t-rich-text, .t-typography"
+                )
+            
+            return {
+                'url': url,
+                'name': name,
+                'price': price,
+                'rating': None,  # пустое
+                'feedbacks': None,  # пустое
+                'brand': brand,
+                'description': description
+            }
+            
+        except Exception as e:
+            logging.error(f"Ошибка при парсинге основной информации для {url}: {e}")
+            return None
+
+    def _extract_price_from_form(self):
+        """Извлечение цены в рублях из формы"""
+        try:
+            # Сначала пытаемся найти и выбрать опцию "Новый" в форме
+            form_selectors = [
+                "select[name='type']",
+                "select.js-tilda-rule",
+                "div.t396__elem select"
+            ]
+            
+            for selector in form_selectors:
+                try:
+                    select_element = self.driver.find_element(By.CSS_SELECTOR, selector)
+                    
+                    # Используем Select для работы с выпадающим списком
+                    from selenium.webdriver.support.ui import Select
+                    select = Select(select_element)
+                    
+                    # Ищем опцию "Новый"
+                    for option in select.options:
+                        if "Новый" in option.text:
+                            select.select_by_visible_text(option.text)
+                            time.sleep(1)  # Ждем обновления цены
+                            break
+                    
+                    break  # Выходим из цикла если нашли селектор
+                except:
+                    continue
+            
+            # Теперь ищем цену в рублях
+            rub_price_selectors = [
+                "//*[contains(text(), 'Стоимость ₽')]/following-sibling::span[contains(@class, 't-calc')]",
+                "//*[contains(text(), 'Стоимость ₽')]//following-sibling::span",
+                "//span[contains(@class, 't-calc') and preceding-sibling::span[contains(text(), 'Стоимость ₽')]]"
+            ]
+            
+            for xpath in rub_price_selectors:
+                try:
+                    price_elements = self.driver.find_elements(By.XPATH, xpath)
+                    for price_element in price_elements:
+                        price_text = price_element.text.strip()
+                        if price_text:
+                            # Очищаем текст от пробелов и символов
+                            price = ''.join(filter(str.isdigit, price_text))
+                            if price:
+                                return int(price)
+                except:
+                    continue
+            
+            # Альтернативный способ: через data-атрибуты опций
+            try:
+                option_elements = self.driver.find_elements(
+                    By.CSS_SELECTOR, 
+                    "option[data-calc-value]"
+                )
+                for option in option_elements:
+                    if "Новый" in option.text:
+                        price_eur = option.get_attribute("data-calc-value")
+                        if price_eur:
+                            # Конвертируем евро в рубли (как в форме на сайте - умножаем на 100)
+                            return int(price_eur) * 100
+            except:
+                pass
+                    
+        except Exception as e:
+            logging.warning(f"Не удалось извлечь цену из формы: {e}")
+        
+        return None
+
+    def _extract_brand(self, product_name):
+        """Извлечение бренда из названия товара"""
+        try:
+            if product_name:
+                # Убираем лишние пробелы и берем первое слово
+                return product_name.strip().split()[0]
+        except:
+            pass
+        return "Unknown"
+
+    def _parse_specifications(self, url):
+        """Парсинг таблицы характеристик"""
+        specs = []
+        
+        try:
+            # Ищем таблицу характеристик
+            table_selectors = [
+                "table.t431__table",
+                "div.t431 table",
+                ".t-rec_pt_45 table",
+                "table.t-record"
+            ]
+            
+            for selector in table_selectors:
+                try:
+                    tables = self.driver.find_elements(By.CSS_SELECTOR, selector)
+                    for table in tables:
+                        rows = table.find_elements(By.CSS_SELECTOR, "tr")
+                        
+                        for row in rows:
+                            cells = row.find_elements(By.CSS_SELECTOR, "td")
+                            if len(cells) >= 2:
+                                name = cells[0].text.strip()
+                                value = cells[1].text.strip()
+                                
+                                if name and value:
+                                    specs.append({
+                                        'url': url,
+                                        'name': name,
+                                        'value': value
+                                    })
+                    
+                    if specs:  # Если нашли характеристики, выходим
+                        break
+                        
+                except:
+                    continue
+            
+            # Если таблицу не нашли, пробуем извлечь из data-part2
+            if not specs:
+                data_parts = self.driver.find_elements(
+                    By.CSS_SELECTOR, 
+                    "div.t431__data-part2"
+                )
+                for data_part in data_parts:
+                    text = data_part.text
+                    if text:
+                        lines = text.split('\n')
+                        for line in lines:
+                            if ';' in line:
+                                name, value = line.split(';', 1)
+                                specs.append({
+                                    'url': url,
+                                    'name': name.strip(),
+                                    'value': value.strip()
+                                })
+        
+        except Exception as e:
+            logging.warning(f"Не удалось извлечь характеристики для {url}: {e}")
+        
+        return specs
+
+    def _get_element_text(self, by, selector):
+        """Безопасное получение текста элемента"""
+        try:
+            element = self.driver.find_element(by, selector)
+            return element.text.strip()
+        except:
+            return ""
+
+    def create_dataframes(self, goods_data, specs_data):
+        """Создание DataFrame из собранных данных"""
+        if not goods_data:
+            goods_df = pd.DataFrame(columns=['url', 'name', 'price', 'rating', 'feedbacks', 'brand', 'description'])
+        else:
+            goods_df = pd.DataFrame(goods_data)
+        
+        if not specs_data:
+            specs_df = pd.DataFrame(columns=['url', 'name', 'value'])
+        else:
+            specs_df = pd.DataFrame(specs_data)
+        
+        # Приводим к правильным типам данных
+        if not goods_df.empty:
+            goods_df = goods_df.astype({
+                'url': 'str',
+                'name': 'str', 
+                'price': 'Int64',  # Разрешаем NaN
+                'rating': 'object',
+                'feedbacks': 'object',
+                'brand': 'str',
+                'description': 'str'
+            })
+        
+        if not specs_df.empty:
+            specs_df = specs_df.astype({
+                'url': 'str',
+                'name': 'str',
+                'value': 'str'
+            })
+        
+        return goods_df, specs_df
 
 
 def normalize_text(text):
